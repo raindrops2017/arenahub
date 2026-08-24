@@ -45,3 +45,5 @@ app-example
 nest-server
 server
 .env
+
+dashboard
