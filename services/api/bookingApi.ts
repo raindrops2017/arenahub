@@ -86,5 +86,15 @@ export const bookingApi = {
       params,
     });
   },
+
+  /**
+   * Manually trigger Paymob webhook via GET for local testing
+   */
+  async simulateWebhook(params: Record<string, string>): Promise<any> {
+    return await apiRequest<any>('payment/webhook/paymob', {
+      method: 'GET',
+      params,
+    });
+  },
 };
 

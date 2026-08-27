@@ -21,8 +21,9 @@ export interface PendingBooking {
   venueId: string;
   venueName?: string;
   date: string;
-  startTime: number;
-  endTime: number;
+  slots?: Array<{ startTime: number; endTime: number }>;
+  startTime?: number;
+  endTime?: number;
   price: number;
   paymentMethod?: PaymentMethodEnum;
   couponCode?: string;
@@ -156,8 +157,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [loginWithGoogle]);
 
   const updateProfile = useCallback(
-    async (data: Partial<UserProfile>) => {
-      await updateUserStore(data);
+    async (data: Partial<UserProfile> & { avatar?: any }) => {
+      try {
+        const updated = await authApi.updateProfile({
+          userName: data.userName || data.name,
+          phone: data.phone,
+          position: data.position || data.favoritePosition,
+          avatar: data.avatar,
+        });
+        if (updated) {
+          await updateUserStore({
+            ...data,
+            userName: updated.userName || data.userName || data.name,
+            name: updated.userName || data.userName || data.name,
+            phone: updated.phone || data.phone,
+            position: updated.position || data.position,
+            favoritePosition: updated.position || data.favoritePosition,
+            avatar: updated.avatar || data.avatar,
+          });
+        } else {
+          await updateUserStore(data);
+        }
+      } catch (err) {
+        console.error('[AuthContext] updateProfile failed:', err);
+        throw err;
+      }
     },
     [updateUserStore]
   );

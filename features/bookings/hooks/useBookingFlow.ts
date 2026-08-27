@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Venue, PitchDate, TimeSlot } from '@/features/venues/schemas/venue.schema';
-import { PaymentMethodEnum, Booking } from '@/types';
+import { PaymentMethodEnum, Booking, CreateBookingPayload } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { bookingApi } from '@/services/api/bookingApi';
 import { walletApi } from '@/services/api/walletApi';
@@ -11,6 +11,8 @@ import { socketService, SlotEventData } from '@/services/api/socketService';
 import {
   generateFutureBookingDates,
   HourlySlot,
+  normalizeDateString,
+  computePaymentSplit,
 } from '../utils/dateSlotGenerator';
 import {
   configurePaymobSDK,
@@ -33,10 +35,7 @@ export function useBookingFlow(venue: Venue) {
   const { isAuthenticated, setPendingBooking, user } = useAuth();
 
   const [selectedDateIndex, setSelectedDateIndex] = useState<number>(0);
-  const [selectedSlot, setSelectedSlot] = useState<HourlySlot | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodEnum>(
-    PaymentMethodEnum.wallet
-  );
+  const [selectedSlots, setSelectedSlots] = useState<HourlySlot[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [showResultModal, setShowResultModal] = useState<boolean>(false);
   const [transactionStatus, setTransactionStatus] = useState<
@@ -77,6 +76,75 @@ export function useBookingFlow(venue: Venue) {
 
   const currentDate = availableDates[selectedDateIndex] || availableDates[0];
 
+  // Multi-slot selection handlers
+  const handleToggleSlot = useCallback((slot: HourlySlot) => {
+    setSelectedSlots((prev) => {
+      const exists = prev.some(
+        (s) =>
+          s.id === slot.id ||
+          (s.startHour24 === slot.startHour24 && s.endHour24 === slot.endHour24)
+      );
+      if (exists) {
+        return prev.filter(
+          (s) =>
+            !(
+              s.id === slot.id ||
+              (s.startHour24 === slot.startHour24 && s.endHour24 === slot.endHour24)
+            )
+        );
+      }
+      return [...prev, slot].sort((a, b) => a.startHour24 - b.startHour24);
+    });
+  }, []);
+
+  const handleClearSlots = useCallback(() => {
+    setSelectedSlots([]);
+  }, []);
+
+  const handleSelectDate = useCallback((index: number) => {
+    setSelectedDateIndex(index);
+    setSelectedSlots([]); // Clear slots when switching dates to enforce single-date reservations
+  }, []);
+
+  // Backward compatibility alias for single slot
+  const selectedSlot = selectedSlots[0] || null;
+  const setSelectedSlot = useCallback((slot: HourlySlot | null) => {
+    if (slot) {
+      setSelectedSlots([slot]);
+    } else {
+      setSelectedSlots([]);
+    }
+  }, []);
+
+  // Total cost and payment split calculation
+  const totalCost = useMemo(() => {
+    return selectedSlots.reduce(
+      (sum, s) => sum + (s.price ?? venue.defaultHourPrice),
+      0
+    );
+  }, [selectedSlots, venue.defaultHourPrice]);
+
+  const [paymentChoice, setPaymentChoice] = useState<'MIN_REQUIRED' | 'FULL' | 'CUSTOM'>('MIN_REQUIRED');
+  const [customCardAmount, setCustomCardAmount] = useState<number | undefined>(undefined);
+
+  const depositEnabled = typeof venue.minimumDepositAmount === 'number' && venue.minimumDepositAmount > 0;
+  const effectivePaymentChoice = depositEnabled ? paymentChoice : 'FULL';
+
+  const paymentSplit = useMemo(() => {
+    return computePaymentSplit({
+      walletBalance,
+      totalCost,
+      minimumDepositAmount: venue.minimumDepositAmount ?? 0,
+      slotsCount: selectedSlots.length || 1,
+      paymentChoice: effectivePaymentChoice,
+      customCardAmount,
+    });
+  }, [walletBalance, totalCost, venue.minimumDepositAmount, selectedSlots.length, effectivePaymentChoice, customCardAmount]);
+
+  const activePaymentMethod = paymentSplit.paymobRequired
+    ? PaymentMethodEnum.paymob
+    : PaymentMethodEnum.wallet;
+
   // Load user wallet balance
   const loadWallet = useCallback(async () => {
     const userId = user?._id || (user as any)?.id;
@@ -96,36 +164,78 @@ export function useBookingFlow(venue: Venue) {
     loadWallet();
   }, [loadWallet]);
 
+  // Ref to track createdBooking without causing useEffect re-runs
+  const createdBookingRef = useRef<Booking | null>(null);
+  useEffect(() => {
+    createdBookingRef.current = createdBooking;
+  }, [createdBooking]);
+
+  // Fetch booked/held slots from backend API
+  const fetchAvailability = useCallback(async () => {
+    const venueId = venue._id || venue.id;
+    if (!venueId) return;
+    try {
+      const unavailable = await bookingApi.getAvailability(venueId);
+      const locks: Record<string, boolean> = {};
+      if (Array.isArray(unavailable)) {
+        unavailable.forEach((b) => {
+          const d = normalizeDateString(b.date);
+          const startH = Number(b.startTime);
+          const endH = Number(
+            b.endTime && b.endTime > startH ? b.endTime : startH + 1
+          );
+          for (let h = startH; h < endH; h++) {
+            locks[`${d}_${h}`] = true;
+          }
+        });
+      }
+      setLockedSlots(locks);
+    } catch (err) {
+      console.error('[useBookingFlow] Failed to fetch availability:', err);
+    }
+  }, [venue._id, venue.id]);
+
+  // Initial availability fetch + refetch when date changes
+  useEffect(() => {
+    fetchAvailability();
+  }, [fetchAvailability, selectedDateIndex]);
+
   // Subscribe to real-time venue slot locks & confirmations
   useEffect(() => {
     const venueId = venue._id || venue.id;
     socketService.joinVenue(venueId);
 
-    // Initial fetch of already booked/held slots
-    bookingApi.getAvailability(venueId).then((unavailable) => {
-      const initialLocks: Record<string, boolean> = {};
-      unavailable.forEach((b) => {
-        const d = typeof b.date === 'string' ? b.date.split('T')[0] : new Date(b.date).toISOString().split('T')[0];
-        const slotKey = `${d}_${b.startTime}`;
-        initialLocks[slotKey] = true;
-      });
-      setLockedSlots((prev) => ({ ...prev, ...initialLocks }));
-    }).catch(console.error);
-
     const unsubLocked = socketService.onSlotLocked((data: SlotEventData) => {
-
       if (data.venueId === venueId) {
-        const slotKey = `${data.date.split('T')[0]}_${data.startTime}`;
-        setLockedSlots((prev) => ({ ...prev, [slotKey]: true }));
+        const d = normalizeDateString(data.date);
+        const startH = Number(data.startTime);
+        const endH = Number(
+          (data as any).endTime && (data as any).endTime > startH
+            ? (data as any).endTime
+            : startH + 1
+        );
+        const newLocks: Record<string, boolean> = {};
+        for (let h = startH; h < endH; h++) {
+          newLocks[`${d}_${h}`] = true;
+        }
+        setLockedSlots((prev) => ({ ...prev, ...newLocks }));
       }
     });
 
     const unsubReleased = socketService.onSlotReleased((data: SlotEventData) => {
       if (data.venueId === venueId) {
-        const slotKey = `${data.date.split('T')[0]}_${data.startTime}`;
+        const d = normalizeDateString(data.date);
+        const startH = Number(data.startTime);
+        const endH = Number(
+          (data as any).endTime && (data as any).endTime > startH
+            ? (data as any).endTime
+            : startH + 1
+        );
         setLockedSlots((prev) => {
           const updated = { ...prev };
-          delete updated[slotKey];
+          for (let h = startH; h < endH; h++) {
+            delete updated[`${d}_${h}`];
+          }
           return updated;
         });
       }
@@ -134,8 +244,18 @@ export function useBookingFlow(venue: Venue) {
     const unsubConfirmed = socketService.onBookingConfirmed(
       async (data: SlotEventData) => {
         if (data.venueId === venueId) {
-          const slotKey = `${data.date.split('T')[0]}_${data.startTime}`;
-          setLockedSlots((prev) => ({ ...prev, [slotKey]: true }));
+          const d = normalizeDateString(data.date);
+          const startH = Number(data.startTime);
+          const endH = Number(
+            (data as any).endTime && (data as any).endTime > startH
+              ? (data as any).endTime
+              : startH + 1
+          );
+          const newLocks: Record<string, boolean> = {};
+          for (let h = startH; h < endH; h++) {
+            newLocks[`${d}_${h}`] = true;
+          }
+          setLockedSlots((prev) => ({ ...prev, ...newLocks }));
           await queryClient.invalidateQueries({
             queryKey: bookingQueries.all(),
           });
@@ -143,10 +263,12 @@ export function useBookingFlow(venue: Venue) {
           await loadWallet();
 
           // If the confirmed booking matches our active session, close checkout modal and show success
+          const currentBooking = createdBookingRef.current;
           if (
-            createdBooking &&
-            (data.bookingId === createdBooking._id ||
-              data.bookingId === (createdBooking as any).id)
+            currentBooking &&
+            (data.bookingId === currentBooking._id ||
+              data.bookingId === (currentBooking as any).id ||
+              (data as any).groupId === (currentBooking as any).groupId)
           ) {
             setShowPaymobModal(false);
             setIsProcessing(false);
@@ -163,7 +285,7 @@ export function useBookingFlow(venue: Venue) {
       unsubConfirmed();
       socketService.leaveVenue(venueId);
     };
-  }, [venue._id, venue.id, createdBooking, queryClient, loadWallet]);
+  }, [venue._id, venue.id, queryClient, loadWallet]);
 
   // Configure native Paymob SDK styling & callbacks
   useEffect(() => {
@@ -192,12 +314,18 @@ export function useBookingFlow(venue: Venue) {
   }, [loadWallet, queryClient]);
 
   const handleBookNow = async () => {
-    if (!selectedSlot) {
-      Alert.alert('Select Time Slot', 'Please pick an available time slot before booking.');
+    if (selectedSlots.length === 0) {
+      Alert.alert(
+        'Select Time Slot',
+        'Please pick at least one available time slot before booking.'
+      );
       return;
     }
 
-    const price = selectedSlot.price ?? venue.defaultHourPrice;
+    const slotsPayload = selectedSlots.map((s) => ({
+      startTime: s.startHour24,
+      endTime: s.endHour24,
+    }));
 
     // Check authentication
     if (!isAuthenticated) {
@@ -205,32 +333,13 @@ export function useBookingFlow(venue: Venue) {
         venueId: venue._id || venue.id,
         venueName: venue.venueName || venue.name,
         date: currentDate.date,
-        startTime: selectedSlot.startHour24,
-        endTime: selectedSlot.endHour24,
-        price,
-        paymentMethod,
+        slots: slotsPayload,
+        startTime: selectedSlots[0].startHour24,
+        endTime: selectedSlots[selectedSlots.length - 1].endHour24,
+        price: totalCost,
+        paymentMethod: activePaymentMethod,
       });
       router.push('/(auth)/login');
-      return;
-    }
-
-    // Validate wallet balance if choosing wallet
-    if (paymentMethod === PaymentMethodEnum.wallet && walletBalance < price) {
-      Alert.alert(
-        'Insufficient Wallet Balance',
-        `Your wallet balance is ${walletBalance} EGP, but this booking is ${price} EGP. Please choose Paymob Card or Cash.`,
-        [
-          {
-            text: 'Use Paymob Card',
-            onPress: () => setPaymentMethod(PaymentMethodEnum.paymob),
-          },
-          {
-            text: 'Pay Cash',
-            onPress: () => setPaymentMethod(PaymentMethodEnum.cash),
-          },
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
       return;
     }
 
@@ -238,22 +347,27 @@ export function useBookingFlow(venue: Venue) {
     const idempotencyKey = generateUUID();
 
     try {
-      const response = await bookingApi.createBooking(
-        {
-          venueId: venue._id || venue.id,
-          date: currentDate.date,
-          startTime: selectedSlot.startHour24,
-          endTime: selectedSlot.endHour24,
-          paymentMethod,
-          idempotencyKey,
-        },
-        idempotencyKey
-      );
+      const payload: CreateBookingPayload = {
+        venueId: venue._id || venue.id,
+        date: currentDate.date,
+        slots: slotsPayload,
+        startTime: selectedSlots[0].startHour24,
+        endTime: selectedSlots[selectedSlots.length - 1].endHour24,
+        paymentMethod: activePaymentMethod,
+        customAmount: paymentSplit.targetPaymentAmount,
+        walletAmountToUse: paymentSplit.walletDeduction,
+        idempotencyKey,
+      };
 
-      const newBooking = response.booking || (response as unknown as Booking);
+      const response = await bookingApi.createBooking(payload, idempotencyKey);
+
+      const newBooking =
+        response.booking ||
+        (response.bookings && response.bookings[0]) ||
+        (response as unknown as Booking);
       setCreatedBooking(newBooking);
 
-      if (paymentMethod === PaymentMethodEnum.paymob) {
+      if (activePaymentMethod === PaymentMethodEnum.paymob) {
         const clientSecret = response.payment?.clientSecret;
         const publicKey = response.payment?.publicKey;
 
@@ -271,7 +385,7 @@ export function useBookingFlow(venue: Venue) {
               setIsProcessing(false);
               Alert.alert(
                 'Native Payment Unavailable',
-                'Native Paymob SDK is not supported on this device. Please select Wallet or Cash payment.'
+                'Native Paymob SDK is not supported on this device. Booking failed.'
               );
             }
           }
@@ -281,11 +395,12 @@ export function useBookingFlow(venue: Venue) {
           );
         }
       } else {
-        // Direct wallet debit or cash confirmed booking
+        // Direct wallet auto-deducted confirmed booking
         setIsProcessing(false);
         setTransactionStatus('SUCCESS');
         setShowResultModal(true);
         await queryClient.invalidateQueries({ queryKey: bookingQueries.all() });
+        await queryClient.invalidateQueries({ queryKey: ['wallet'] });
         await loadWallet();
       }
     } catch (err: any) {
@@ -297,13 +412,26 @@ export function useBookingFlow(venue: Venue) {
   };
 
   const handlePaymobSuccess = useCallback(
-    async (transactionId: string) => {
-      console.log('[useBookingFlow] Paymob transaction succeeded locally, verifying with backend...');
+    async (transactionId: string, params?: Record<string, string>) => {
+      console.log(
+        '[useBookingFlow] Paymob transaction succeeded locally, verifying with backend...'
+      );
       setShowPaymobModal(false);
       setPaymobSession(null);
       setIsProcessing(true);
 
       if (createdBooking) {
+        if (__DEV__ && params) {
+          try {
+            console.log('[useBookingFlow] Simulating webhook on local dev environment');
+            await bookingApi.simulateWebhook(params);
+            // Give backend a moment to process before we poll
+            await new Promise((res) => setTimeout(res, 1000));
+          } catch (e) {
+            console.warn('[useBookingFlow] Failed to simulate webhook', e);
+          }
+        }
+
         let isConfirmed = false;
         const bookingId = createdBooking._id || (createdBooking as any).id;
         // Poll for up to 8 seconds
@@ -324,7 +452,9 @@ export function useBookingFlow(venue: Venue) {
         if (isConfirmed) {
           setTransactionStatus('SUCCESS');
           setShowResultModal(true);
-          await queryClient.invalidateQueries({ queryKey: bookingQueries.all() });
+          await queryClient.invalidateQueries({
+            queryKey: bookingQueries.all(),
+          });
           await queryClient.invalidateQueries({ queryKey: ['wallet'] });
           await loadWallet();
         } else {
@@ -341,22 +471,30 @@ export function useBookingFlow(venue: Venue) {
     [createdBooking, loadWallet, queryClient]
   );
 
-  const handlePaymobFailure = useCallback((errorData: any) => {
-    console.warn('[useBookingFlow] Paymob transaction failed or cancelled:', errorData);
-    setShowPaymobModal(false);
-    setPaymobSession(null);
-    setIsProcessing(false);
-    setFailureReason(errorData?.message || 'Payment was rejected or cancelled.');
-    setTransactionStatus('FAIL');
-    setShowResultModal(true);
+  const handlePaymobFailure = useCallback(
+    (errorData: any) => {
+      console.warn(
+        '[useBookingFlow] Paymob transaction failed or cancelled:',
+        errorData
+      );
+      setShowPaymobModal(false);
+      setPaymobSession(null);
+      setIsProcessing(false);
+      setFailureReason(
+        errorData?.message || 'Payment was rejected or cancelled.'
+      );
+      setTransactionStatus('FAIL');
+      setShowResultModal(true);
 
-    if (createdBooking) {
-      const bookingId = createdBooking._id || (createdBooking as any).id;
-      bookingApi.cancelBooking(bookingId).catch(err => {
-        console.warn('Failed to release booking slot:', err);
-      });
-    }
-  }, [createdBooking]);
+      if (createdBooking) {
+        const bookingId = createdBooking._id || (createdBooking as any).id;
+        bookingApi.cancelBooking(bookingId).catch((err) => {
+          console.warn('Failed to release booking slot:', err);
+        });
+      }
+    },
+    [createdBooking]
+  );
 
   const handlePaymobClose = useCallback(() => {
     setShowPaymobModal(false);
@@ -365,7 +503,7 @@ export function useBookingFlow(venue: Venue) {
 
     if (createdBooking) {
       const bookingId = createdBooking._id || (createdBooking as any).id;
-      bookingApi.cancelBooking(bookingId).catch(err => {
+      bookingApi.cancelBooking(bookingId).catch((err) => {
         console.warn('Failed to release booking slot:', err);
       });
     }
@@ -374,18 +512,33 @@ export function useBookingFlow(venue: Venue) {
   const handleCloseModal = () => {
     setShowResultModal(false);
     if (transactionStatus === 'SUCCESS') {
-      router.push('/profile');
+      fetchAvailability();
+      router.replace('/');
+    } else {
+      // Refetch availability in case a pending booking expired
+      fetchAvailability();
     }
   };
 
   return {
     availableDates,
     selectedDateIndex,
-    setSelectedDateIndex,
+    setSelectedDateIndex: handleSelectDate,
+    selectedSlots,
+    setSelectedSlots,
     selectedSlot,
     setSelectedSlot,
-    paymentMethod,
-    setPaymentMethod,
+    handleToggleSlot,
+    handleClearSlots,
+    totalCost,
+    minRequiredDeposit: paymentSplit.minRequiredDeposit,
+    paymentChoice,
+    setPaymentChoice,
+    customCardAmount,
+    setCustomCardAmount,
+    paymentSplit,
+    paymentMethod: activePaymentMethod,
+    setPaymentMethod: () => {},
     isProcessing,
     showResultModal,
     transactionStatus,
@@ -402,3 +555,4 @@ export function useBookingFlow(venue: Venue) {
     handlePaymobClose,
   };
 }
+

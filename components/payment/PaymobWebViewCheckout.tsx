@@ -29,7 +29,7 @@ export interface PaymobWebViewCheckoutProps {
   /** Optional custom base checkout URL override */
   baseUrl?: string;
   /** Callback fired on successful payment with transaction ID or reference */
-  onSuccess: (transactionId: string) => void;
+  onSuccess: (transactionId: string, params?: Record<string, string>) => void;
   /** Callback fired on payment failure, cancellation, or decline */
   onFailure: (errorData: PaymobErrorData) => void;
   /** Callback fired when user closes the modal */
@@ -132,7 +132,7 @@ export const PaymobWebViewCheckout: React.FC<PaymobWebViewCheckoutProps> = ({
         if (matchesSuccess) {
           isHandledRef.current = true;
           const txnId = params.id || params.order || params.transaction_id || 'SUCCESS';
-          onSuccess(txnId);
+          onSuccess(txnId, params);
           return;
         }
       }
@@ -181,7 +181,7 @@ export const PaymobWebViewCheckout: React.FC<PaymobWebViewCheckoutProps> = ({
           params.transaction_id ||
           params.order_id ||
           'UNKNOWN_TXN';
-        onSuccess(transactionId);
+        onSuccess(transactionId, params);
         return;
       }
 

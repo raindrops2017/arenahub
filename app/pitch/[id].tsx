@@ -7,10 +7,7 @@ import { VenueHeader } from '@/features/venues/components/VenueHeader';
 import { VenueAmenities } from '@/features/venues/components/VenueAmenities';
 import { DateSelector } from '@/features/bookings/components/DateSelector';
 import { SlotPicker } from '@/features/bookings/components/SlotPicker';
-import { PaymentMethodSelector } from '@/features/bookings/components/PaymentMethodSelector';
 import { BookingSummaryFooter } from '@/features/bookings/components/BookingSummaryFooter';
-import { BookingResultModal } from '@/features/bookings/components/BookingResultModal';
-import { PaymobWebViewCheckout } from '@/components/payment/PaymobWebViewCheckout';
 import { useBookingFlow } from '@/features/bookings/hooks/useBookingFlow';
 import { useLanguage } from '@/context/LanguageContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -53,32 +50,42 @@ function PitchDetailsContent({
   venue: any;
   onBack: () => void;
 }) {
+  const router = useRouter();
   const {
     availableDates,
     selectedDateIndex,
     setSelectedDateIndex,
     currentDate,
-    selectedSlot,
-    setSelectedSlot,
-    paymentMethod,
-    setPaymentMethod,
+    selectedSlots,
+    handleToggleSlot,
+    handleClearSlots,
+    paymentSplit,
     isProcessing,
-    showResultModal,
-    transactionStatus,
-    failureReason,
-    createdBooking,
-    walletBalance,
-    handleBookNow,
-    handleCloseModal,
-    showPaymobModal,
-    paymobSession,
-    handlePaymobSuccess,
-    handlePaymobFailure,
-    handlePaymobClose,
   } = useBookingFlow(venue);
 
-  const { colors, isDark } = useTheme();
-  const currentPrice = selectedSlot?.price ?? venue.defaultHourPrice;
+  const { isArabic } = useLanguage();
+  const { colors } = useTheme();
+
+  const slotSummaryText =
+    selectedSlots.length === 1
+      ? selectedSlots[0].time
+      : selectedSlots.length > 1
+      ? isArabic
+        ? `${selectedSlots.length} فترات محددة`
+        : `${selectedSlots.length} slots selected`
+      : undefined;
+
+  const handleNavigateToCheckout = () => {
+    if (selectedSlots.length === 0 || !currentDate) return;
+    router.push({
+      pathname: '/pitch/checkout',
+      params: {
+        venueId: venue._id || venue.id,
+        date: currentDate.date,
+        startHours: selectedSlots.map((s) => s.startHour24).join(','),
+      },
+    });
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -97,57 +104,30 @@ function PitchDetailsContent({
 
           <SlotPicker
             slots={currentDate?.slots || []}
-            selectedSlotTime={selectedSlot?.time}
-            onSelectSlot={(slot) => setSelectedSlot(slot as any)}
+            selectedSlots={selectedSlots}
+            onToggleSlot={handleToggleSlot}
+            onClearSlots={handleClearSlots}
             defaultPrice={venue.defaultHourPrice}
           />
 
           <VenueAmenities amenities={venue.amenities} />
-
-          <PaymentMethodSelector
-            selectedMethod={paymentMethod}
-            onSelectMethod={setPaymentMethod}
-            walletBalance={walletBalance}
-            totalPrice={currentPrice}
-          />
         </View>
       </ScrollView>
 
       <BookingSummaryFooter
-        totalPrice={currentPrice}
+        totalPrice={paymentSplit.totalCost}
+        targetPaymentAmount={paymentSplit.targetPaymentAmount}
+        walletDeduction={paymentSplit.walletDeduction}
+        paymobRemainder={paymentSplit.paymobRemainder}
+        remainingAtVenue={paymentSplit.remainingAtVenue}
+        isDepositPayment={paymentSplit.isDepositPayment}
+        minimumDepositAmount={venue.minimumDepositAmount}
+        selectedSlotsCount={selectedSlots.length}
         selectedDateText={currentDate?.date}
-        selectedSlotTime={selectedSlot?.time}
-        onBookNow={handleBookNow}
+        selectedSlotTime={slotSummaryText}
+        onBookNow={handleNavigateToCheckout}
         isLoading={isProcessing}
-        disabled={!selectedSlot || selectedSlot.available === false}
-      />
-
-      {/* Modern Paymob Intention WebView Modal Checkout */}
-      <PaymobWebViewCheckout
-        visible={showPaymobModal}
-        clientSecret={paymobSession?.clientSecret || ''}
-        publicKey={paymobSession?.publicKey || ''}
-        headerTitle="Paymob Secure Payment"
-        headerBackgroundColor={isDark ? '#0f172a' : '#ffffff'}
-        headerTextColor={isDark ? '#ffffff' : '#0f172a'}
-        loadingIndicatorColor={isDark ? '#22c55e' : '#16a34a'}
-        onSuccess={handlePaymobSuccess}
-        onFailure={handlePaymobFailure}
-        onClose={handlePaymobClose}
-      />
-
-      <BookingResultModal
-        visible={showResultModal}
-        status={transactionStatus}
-        failureReason={failureReason}
-        venueName={venue.venueName || venue.name}
-        dateText={currentDate?.date}
-        slotTime={selectedSlot?.time}
-        totalPrice={currentPrice}
-        bookingId={createdBooking?._id}
-        bookingCode={createdBooking?.bookingCode}
-        qrCode={createdBooking?.qrCode}
-        onClose={handleCloseModal}
+        disabled={selectedSlots.length === 0}
       />
     </View>
   );

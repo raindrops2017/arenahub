@@ -16,6 +16,8 @@ interface BookingResultModalProps {
   dateText?: string;
   slotTime?: string;
   totalPrice?: number;
+  paidAmount?: number;
+  remainingAmount?: number;
   currency?: string;
   bookingId?: string;
   bookingCode?: string;
@@ -31,6 +33,8 @@ export function BookingResultModal({
   dateText,
   slotTime,
   totalPrice,
+  paidAmount,
+  remainingAmount,
   bookingId,
   bookingCode,
   qrCode,
@@ -81,7 +85,7 @@ export function BookingResultModal({
             />
           </View>
 
-          {/* Title */}
+          {/* Title & Subtitle */}
           <Text
             style={[
               { color: colors.textPrimary },
@@ -100,9 +104,9 @@ export function BookingResultModal({
           >
             {isSuccess
               ? (isArabic
-                  ? 'تم حجز موعدك بنجاح. أظهر رمز الدخول عند بوابة الملعب.'
-                  : 'Your slot is secured. Present this pass at the arena reception.')
-              : failureReason || (isArabic ? 'لم نتمكن من إتمام الدفع. يرجى المحاولة مجدداً.' : 'Payment could not be completed. Please try again.')}
+                  ? 'تم تأكيد حجزك بنجاح. أظهر الرمز عند الدخول.'
+                  : 'Your booking is confirmed. Show this pass at entry.')
+              : failureReason || (isArabic ? 'لم يتم إتمام العملية. يرجى المحاولة مجدداً.' : 'Payment failed. Please try again.')}
           </Text>
 
           {/* QR Code & Match Pass Details for Success */}
@@ -202,7 +206,27 @@ export function BookingResultModal({
                       ]}
                       className="text-xs"
                     >
-                      {isArabic ? 'المبلغ المدفوع' : 'Amount Paid'}
+                      {isArabic ? 'الإجمالي' : 'Total'}
+                    </Text>
+                    <Text
+                      style={{ color: colors.textPrimary }}
+                      className="text-xs font-bold"
+                    >
+                      {formatCurrency(totalPrice)}
+                    </Text>
+                  </View>
+                )}
+
+                {paidAmount !== undefined && (
+                  <View className={`flex-row justify-between ${isArabic ? 'flex-row-reverse' : ''}`}>
+                    <Text
+                      style={[
+                        { color: colors.mutedForeground },
+                        isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                      ]}
+                      className="text-xs"
+                    >
+                      {isArabic ? 'المدفوع' : 'Paid'}
                     </Text>
                     <Text
                       style={[
@@ -211,8 +235,33 @@ export function BookingResultModal({
                       ]}
                       className="text-xs font-black"
                     >
-                      {formatCurrency(totalPrice)}
+                      {formatCurrency(paidAmount)}
                     </Text>
+                  </View>
+                )}
+
+                {remainingAmount !== undefined && remainingAmount > 0 && (
+                  <View className={`flex-row justify-between items-center pt-1 border-t border-dashed ${isDark ? 'border-gray-800' : 'border-gray-200'} ${isArabic ? 'flex-row-reverse' : ''}`}>
+                    <Text
+                      style={[
+                        { color: '#f59e0b' },
+                        isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                      ]}
+                      className="text-xs font-bold"
+                    >
+                      {isArabic ? 'المتبقي بالملعب' : 'Due at Venue'}
+                    </Text>
+                    <View className="bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                      <Text
+                        style={[
+                          { color: '#f59e0b' },
+                          isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                        ]}
+                        className="text-xs font-black"
+                      >
+                        {formatCurrency(remainingAmount)}
+                      </Text>
+                    </View>
                   </View>
                 )}
               </View>
@@ -221,7 +270,7 @@ export function BookingResultModal({
 
           {/* Action Button */}
           <Button
-            title={isSuccess ? (isArabic ? 'تم، العودة للرئيسية' : 'Done & Return') : (isArabic ? 'إعادة المحاولة' : 'Try Again')}
+            title={isSuccess ? (isArabic ? 'الرئيسية' : 'Home') : (isArabic ? 'إعادة المحاولة' : 'Try Again')}
             onPress={onClose}
             size="lg"
             className="w-full"

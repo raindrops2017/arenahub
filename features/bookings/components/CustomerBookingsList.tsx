@@ -3,7 +3,7 @@ import { View, Pressable, Modal, Alert, ActivityIndicator } from 'react-native';
 import { Text } from '@/components/ui/AppText';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { Booking, BookingStatusEnum, PaymentMethodEnum } from '@/types';
+import { Booking, BookingStatusEnum, PaymentMethodEnum, PaymentStatusEnum } from '@/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { QRCodeWidget } from '@/components/QRCodeWidget';
@@ -77,7 +77,7 @@ export function CustomerBookingsList({
               await bookingApi.cancelBooking(bookingId);
               setIsCancelling(false);
               setSelectedBooking(null);
-              Alert.alert(t('common.success'), isArabic ? 'تم إلغاء الحجز واسترداد الرصيد.' : 'Booking cancelled and slot released.');
+              Alert.alert(t('common.success'), isArabic ? 'تم إلغاء الحجز وإضافة المبلغ المسترد لمحفظتك بنجاح.' : 'Booking cancelled and refunded to your wallet.');
               if (onRefresh) onRefresh();
             } catch (err: any) {
               setIsCancelling(false);
@@ -165,55 +165,107 @@ export function CustomerBookingsList({
                 />
               </View>
 
-              <View
-                style={{ borderTopColor: colors.cardBorder }}
-                className={`flex-row justify-between items-center pt-2.5 border-t mt-1 ${
-                  isArabic ? 'flex-row-reverse' : ''
-                }`}
-              >
-                <View className={`flex-row items-center gap-2 ${isArabic ? 'flex-row-reverse' : ''}`}>
-                  <Text
-                    style={[
-                      { color: colors.mutedForeground },
-                      isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
-                    ]}
-                    className="text-xs"
+              {(() => {
+                const finalCost = booking.finalPrice ?? booking.totalPrice ?? 0;
+                const paid = booking.paidAmount !== undefined && booking.paidAmount !== null
+                  ? booking.paidAmount
+                  : booking.paymentStatus === PaymentStatusEnum.paid || (booking.paymentStatus as string) === 'paid'
+                  ? finalCost
+                  : booking.paymentStatus === PaymentStatusEnum.partially_paid || (booking.paymentStatus as string) === 'partially_paid'
+                  ? Math.min(100, finalCost)
+                  : 0;
+                const remaining = booking.remainingAmount !== undefined && booking.remainingAmount !== null
+                  ? booking.remainingAmount
+                  : Math.max(0, finalCost - paid);
+
+                return (
+                  <View
+                    style={{ borderTopColor: colors.cardBorder }}
+                    className="flex-col pt-2.5 border-t mt-1 gap-2"
                   >
-                    {isArabic ? 'المبلغ: ' : 'Price: '}
-                    <Text
-                      style={{ color: isDark ? '#22c55e' : '#16a34a' }}
-                      className="font-black"
-                    >
-                      {formatCurrency(booking.totalPrice)}
-                    </Text>
-                  </Text>
-                  {booking.bookingCode && (
+                    <View className={`flex-row justify-between items-center ${isArabic ? 'flex-row-reverse' : ''}`}>
+                      <View className={`flex-row items-center gap-2 ${isArabic ? 'flex-row-reverse' : ''}`}>
+                        <Text
+                          style={[
+                            { color: colors.mutedForeground },
+                            isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                          ]}
+                          className="text-xs"
+                        >
+                          {isArabic ? 'الإجمالي: ' : 'Total: '}
+                          <Text style={{ color: colors.textPrimary }} className="font-bold">
+                            {formatCurrency(finalCost)}
+                          </Text>
+                        </Text>
+                        {booking.bookingCode && (
+                          <View
+                            style={{ backgroundColor: isDark ? '#141d2e' : '#f1f5f9' }}
+                            className="px-2 py-0.5 rounded-md"
+                          >
+                            <Text
+                              style={{ color: isDark ? '#22c55e' : '#16a34a' }}
+                              className="text-[10px] font-extrabold uppercase"
+                            >
+                              {booking.bookingCode}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <View className={`flex-row items-center ${isArabic ? 'flex-row-reverse' : ''}`}>
+                        <Ionicons name="qr-code-outline" size={14} color="#3b82f6" />
+                        <Text
+                          style={[
+                            { color: '#3b82f6' },
+                            isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                          ]}
+                          className={`text-xs font-bold ${isArabic ? 'mr-1' : 'ml-1'}`}
+                        >
+                          {isArabic ? 'عرض التذكرة' : 'View Ticket'}
+                        </Text>
+                      </View>
+                    </View>
+
                     <View
-                      style={{ backgroundColor: isDark ? '#141d2e' : '#f1f5f9' }}
-                      className="px-2 py-0.5 rounded-md"
+                      style={{ backgroundColor: isDark ? 'rgba(20, 29, 46, 0.6)' : '#f8fafc' }}
+                      className={`flex-row justify-between items-center px-3 py-1.5 rounded-xl border ${isDark ? 'border-gray-800' : 'border-gray-200'} ${isArabic ? 'flex-row-reverse' : ''}`}
                     >
                       <Text
-                        style={{ color: isDark ? '#22c55e' : '#16a34a' }}
-                        className="text-[10px] font-extrabold uppercase"
+                        style={[
+                          { color: isDark ? '#22c55e' : '#16a34a' },
+                          isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                        ]}
+                        className="text-xs font-bold"
                       >
-                        {booking.bookingCode}
+                        {isArabic ? 'المدفوع: ' : 'Paid: '}
+                        {formatCurrency(paid)}
                       </Text>
+                      {remaining > 0 ? (
+                        <View className="flex-row items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                          <Text
+                            style={[
+                              { color: '#f59e0b' },
+                              isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                            ]}
+                            className="text-[11px] font-black"
+                          >
+                            {isArabic ? `المتبقي: ${formatCurrency(remaining)}` : `Due: ${formatCurrency(remaining)}`}
+                          </Text>
+                        </View>
+                      ) : (
+                        <Text
+                          style={[
+                            { color: isDark ? '#22c55e' : '#16a34a' },
+                            isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                          ]}
+                          className="text-[11px] font-bold"
+                        >
+                          {isArabic ? 'خالص بالكامل ✓' : 'Paid in Full ✓'}
+                        </Text>
+                      )}
                     </View>
-                  )}
-                </View>
-                <View className={`flex-row items-center ${isArabic ? 'flex-row-reverse' : ''}`}>
-                  <Ionicons name="qr-code-outline" size={15} color="#3b82f6" />
-                  <Text
-                    style={[
-                      { color: '#3b82f6' },
-                      isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
-                    ]}
-                    className={`text-xs font-bold ${isArabic ? 'mr-1' : 'ml-1'}`}
-                  >
-                    {isArabic ? 'عرض التذكرة' : 'View Ticket'}
-                  </Text>
-                </View>
-              </View>
+                  </View>
+                );
+              })()}
             </Pressable>
           );
         })}
@@ -386,14 +438,65 @@ export function CustomerBookingsList({
                       {t('booking.totalAmount')}
                     </Text>
                     <Text
+                      style={{ color: colors.textPrimary }}
+                      className="text-xs font-bold"
+                    >
+                      {formatCurrency(selectedBooking.finalPrice ?? selectedBooking.totalPrice ?? 0)}
+                    </Text>
+                  </View>
+
+                  <View className={`flex-row justify-between ${isArabic ? 'flex-row-reverse' : ''}`}>
+                    <Text
+                      style={[
+                        { color: colors.mutedForeground },
+                        isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                      ]}
+                      className="text-xs"
+                    >
+                      {isArabic ? 'المبلغ المدفوع' : 'Amount Paid'}
+                    </Text>
+                    <Text
                       style={[
                         { color: isDark ? '#22c55e' : '#16a34a' },
                         isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
                       ]}
                       className="text-xs font-black"
                     >
-                      {formatCurrency(selectedBooking.totalPrice)}
+                      {formatCurrency(
+                        selectedBooking.paidAmount !== undefined && selectedBooking.paidAmount !== null
+                          ? selectedBooking.paidAmount
+                          : selectedBooking.paymentStatus === PaymentStatusEnum.paid || (selectedBooking.paymentStatus as string) === 'paid'
+                          ? (selectedBooking.finalPrice ?? selectedBooking.totalPrice ?? 0)
+                          : selectedBooking.paymentStatus === PaymentStatusEnum.partially_paid || (selectedBooking.paymentStatus as string) === 'partially_paid'
+                          ? Math.min(100, (selectedBooking.finalPrice ?? selectedBooking.totalPrice ?? 0))
+                          : 0
+                      )}
                     </Text>
+                  </View>
+
+                  <View className={`flex-row justify-between items-center pt-2 border-t border-dashed ${isDark ? 'border-gray-800' : 'border-gray-200'} ${isArabic ? 'flex-row-reverse' : ''}`}>
+                    <Text
+                      style={[
+                        { color: (selectedBooking.remainingAmount ?? 0) > 0 ? '#f59e0b' : colors.mutedForeground },
+                        isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                      ]}
+                      className="text-xs font-bold"
+                    >
+                      {isArabic ? 'المتبقي للدفع في الملعب' : 'Remaining Due at Venue'}
+                    </Text>
+                    <View className={(selectedBooking.remainingAmount !== undefined ? selectedBooking.remainingAmount : Math.max(0, (selectedBooking.finalPrice ?? selectedBooking.totalPrice ?? 0) - (selectedBooking.paidAmount ?? 0))) > 0 ? 'bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30' : ''}>
+                      <Text
+                        style={[
+                          { color: (selectedBooking.remainingAmount !== undefined ? selectedBooking.remainingAmount : Math.max(0, (selectedBooking.finalPrice ?? selectedBooking.totalPrice ?? 0) - (selectedBooking.paidAmount ?? 0))) > 0 ? '#f59e0b' : (isDark ? '#22c55e' : '#16a34a') },
+                          isArabic ? { fontFamily: 'DroidArabicKufi' } : undefined,
+                        ]}
+                        className="text-xs font-black"
+                      >
+                        {(selectedBooking.remainingAmount !== undefined && selectedBooking.remainingAmount !== null ? selectedBooking.remainingAmount : Math.max(0, (selectedBooking.finalPrice ?? selectedBooking.totalPrice ?? 0) - (selectedBooking.paidAmount ?? 0))) > 0
+                          ? formatCurrency(selectedBooking.remainingAmount !== undefined ? selectedBooking.remainingAmount : Math.max(0, (selectedBooking.finalPrice ?? selectedBooking.totalPrice ?? 0) - (selectedBooking.paidAmount ?? 0)))
+                          : (isArabic ? '0 ج.م (خالص)' : '0 EGP (Settled)')}
+                      </Text>
+                    </View>
                   </View>
                 </View>
               </View>

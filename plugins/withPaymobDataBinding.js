@@ -44,6 +44,8 @@ android {
   // Handle manifest merger conflict with paymob-reactnative
   config = withAndroidManifest(config, (config) => {
     const manifest = config.modResults.manifest;
+    manifest.$ = manifest.$ || {};
+    manifest.$["xmlns:tools"] = "http://schemas.android.com/tools";
     if (manifest && manifest.application && manifest.application[0]) {
       const app = manifest.application[0];
       app.$ = app.$ || {};

@@ -169,36 +169,10 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-        {/* Quick Language Toggle, Theme Toggle, Wallet & Profile Avatar */}
+        {/* Quick Language Toggle, Theme Toggle, & Profile Avatar */}
         <View className={`flex-row items-center gap-2 ${isArabic ? 'flex-row-reverse' : ''}`}>
           <ThemeToggle variant="quick" />
           <LanguageToggle variant="compact" />
-
-          {isAuthenticated && (
-            <Pressable
-              onPress={() => router.push('/player-card')}
-              accessibilityRole="button"
-              accessibilityLabel="View player card and wallet balance"
-              style={{
-                backgroundColor: colors.card,
-                borderColor: colors.cardBorder,
-              }}
-              className={`flex-row items-center border px-2.5 py-1.5 rounded-full active:opacity-80 shadow-sm ${
-                isArabic ? 'flex-row-reverse' : ''
-              }`}
-            >
-              <Ionicons name="wallet-outline" size={13} color={isDark ? '#22c55e' : '#16a34a'} />
-              <Text
-                style={{
-                  color: isDark ? '#22c55e' : '#16a34a',
-                  fontFamily: isArabic ? 'DroidArabicKufi' : undefined,
-                }}
-                className={`${isArabic ? 'mr-1' : 'ml-1'} text-xs font-black`}
-              >
-                {formatCurrency(user?.walletBalance ?? 0)}
-              </Text>
-            </Pressable>
-          )}
 
           <Pressable
             onPress={() => {

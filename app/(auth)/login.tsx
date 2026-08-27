@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons, FontAwesome5, AntDesign } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
+import { useSessionStore } from '@/features/auth/stores/useSessionStore';
 import { useLanguage } from '@/context/LanguageContext';
 import { useTheme } from '@/context/ThemeContext';
 import { LanguageToggle } from '@/components/LanguageToggle';
@@ -28,6 +29,12 @@ export default function LoginScreen() {
   const [error, setError] = useState<string>('');
 
   const navigateAfterAuth = () => {
+    const currentUser = useSessionStore.getState().user;
+    if (!currentUser?.phone || !currentUser.phone.trim()) {
+      router.replace('/(auth)/profile-setup');
+      return;
+    }
+
     if (pendingBooking) {
       router.replace({
         pathname: '/pitch/[id]',

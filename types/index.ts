@@ -34,6 +34,7 @@ export enum BookingStatusEnum {
 export enum PaymentStatusEnum {
   unpaid = 'unpaid',
   paid = 'paid',
+  partially_paid = 'partially_paid',
   refunded = 'refunded',
   pay_at_venue = 'pay_at_venue',
 }
@@ -99,6 +100,7 @@ export interface Venue {
   WorkingHours?: number;
   defaultHourPrice: number;
   customHourPrices?: CustomHourPrice[];
+  minimumDepositAmount?: number;
   isActive: boolean;
   createdBy?: string;
   updatedBy?: string;
@@ -155,8 +157,11 @@ export interface Booking {
   couponCode?: string;
   discountAmount?: number;
   finalPrice?: number;
+  paidAmount?: number;
+  remainingAmount?: number;
   paymentMethod?: PaymentMethodEnum;
   expiresAt?: string;
+  groupId?: string;
   idempotencyKey?: string;
   requestHash?: string;
   createdAt?: string;
@@ -278,13 +283,21 @@ export interface ApiResponse<T = any> {
   data: T;
 }
 
+export interface CreateBookingSlotItem {
+  startTime: number;
+  endTime: number;
+}
+
 // DTO Payload Types
 export interface CreateBookingPayload {
   venueId: string;
   date: string;
-  startTime: number;
-  endTime: number;
-  paymentMethod: PaymentMethodEnum;
+  slots?: CreateBookingSlotItem[];
+  startTime?: number;
+  endTime?: number;
+  paymentMethod?: PaymentMethodEnum;
+  customAmount?: number;
+  walletAmountToUse?: number;
   couponCode?: string;
   idempotencyKey?: string;
 }
@@ -295,6 +308,8 @@ export interface PaymobPaymentData {
   paymentId?: string;
   transactionId?: string;
   amountToPay?: number;
+  walletDeduction?: number;
+  totalTarget?: number;
   currency?: string;
   clientSecret?: string;
   publicKey?: string;
@@ -303,12 +318,22 @@ export interface PaymobPaymentData {
 }
 
 export interface CreateBookingResponse {
-  booking: Booking;
+  booking?: Booking;
+  bookings?: Booking[];
+  groupId?: string;
   payment?: PaymobPaymentData | Payment | any;
+  amountToPay?: number;
+  walletDeduction?: number;
+  totalTarget?: number;
+  clientSecret?: string;
+  publicKey?: string;
+  redirectUrl?: string;
 }
 
 export interface CreatePaymentPayload {
   paymentMethod: PaymentMethodEnum;
+  customAmount?: number;
+  walletAmountToUse?: number;
   couponCode?: string;
 }
 

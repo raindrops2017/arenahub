@@ -61,12 +61,54 @@ export const authApi = {
 
   /**
    * Retrieves current authenticated customer user profile.
-   * Hits `GET /api/v1/users/profile`.
+   * Hits `GET /api/v1/users/customer/profile`.
    */
   async getProfile(): Promise<CustomerUser> {
-    return await apiRequest<CustomerUser>('users/profile', {
+    const res = await apiRequest<any>('users/customer/profile', {
       method: 'GET',
     });
+    return res?.data || res;
+  },
+
+  /**
+   * Updates current authenticated customer profile.
+   * Hits `PATCH /api/v1/users/customer/profile`.
+   */
+  async updateProfile(data: {
+    userName?: string;
+    phone?: string;
+    position?: string;
+    avatar?: any;
+  }): Promise<CustomerUser> {
+    if (data.avatar && typeof data.avatar === 'object' && data.avatar.uri) {
+      const formData = new FormData();
+      if (data.userName) formData.append('userName', data.userName);
+      if (data.phone) formData.append('phone', data.phone);
+      if (data.position) formData.append('position', data.position);
+
+      const fileUri = data.avatar.uri;
+      const filename = fileUri.split('/').pop() || 'avatar.jpg';
+      const match = /\.(\w+)$/.exec(filename);
+      const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+      formData.append('avatar', {
+        uri: fileUri,
+        name: filename,
+        type: type,
+      } as any);
+
+      const res = await apiRequest<{ message: string; data: CustomerUser }>('users/customer/profile', {
+        method: 'PATCH',
+        body: formData,
+      });
+      return res?.data || (res as any);
+    }
+
+    const res = await apiRequest<{ message: string; data: CustomerUser }>('users/customer/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+    return res?.data || (res as any);
   },
 
   /**
